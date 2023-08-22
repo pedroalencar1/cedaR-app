@@ -1,0 +1,26 @@
+{
+    "id": "DBD12F74",
+    "path": "~/Library/CloudStorage/OneDrive-Personal/@_PostDoc/Copula/app_cedar/app.R",
+    "project_path": "app.R",
+    "type": "r_source",
+    "hash": "110167753",
+    "contents": "",
+    "dirty": false,
+    "created": 1692687313513.0,
+    "source_on_save": false,
+    "relative_order": 1,
+    "properties": {
+        "source_window_id": "",
+        "Source": "Source",
+        "cursorPosition": "319,63",
+        "scrollLine": "315"
+    },
+    "folds": "47|59|142|0|\n",
+    "lastKnownWriteTime": 1692688117,
+    "encoding": "UTF-8",
+    "collab_server": "",
+    "source_window": "",
+    "last_content_update": 1692688117049,
+    "read_only": false,
+    "read_only_alternatives": []
+}

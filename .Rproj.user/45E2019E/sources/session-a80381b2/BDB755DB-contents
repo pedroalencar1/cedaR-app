@@ -1,0 +1,392 @@
+"
+Simple shiny app to visualize drought changes for copula paper
+
+Pedro Alencar
+
+21.08.23
+"
+
+# 0. import libraries  -------------------------------------------
+
+library(shiny) # comment out when pushing to shinyapps.io
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(magrittr)
+library(shinythemes)
+library(bslib)
+library(plotly)
+library(leaflet)
+library(RColorBrewer)
+library(fst)
+library(tibble)
+library(tibbletime)
+library(lubridate)
+library(sf)
+library(ggpubr)
+library(plotly)
+
+
+# 1. import data ----------------------------------------------------------
+
+europe <- sf::read_sf("./data/gis/Europe/Europe.shp")
+path_to_files <- "./files/output_new/"
+files <- list.files(path_to_files, full.names = T)
+figures <- list.files("./plots", full.names = T)
+
+data_stations <- data.table::fread("./files/stations.csv") |>
+  mutate(name = stringr::str_to_title(name),
+         name = trimws(name),
+         color = ifelse(cat == 1, "#053061", 
+                        ifelse(cat == 2, "#2166AC",
+                               ifelse(cat == 3, "#D6604D", "#67001F")))
+  )
+
+
+get_plot_mosaic_op <- function(id_station,
+                               all_files, 
+                               periods = c(5, 10, 20, 50)){
+  # 
+  # id_station = id
+  # all_files = files
+  # periods <- c( 5, 10, 20,50)
+
+  st_data <- all_files %>%
+    .[grepl(paste0(id_station,"_output_copula_dist_1.RData"),.)]
+  
+  df <- data.frame()
+  for (file in st_data){
+    aux <- readRDS(file)
+    aux$id <- as.integer(stringr::str_match(file, paste0("new//\\s*(.*?)\\s*_",id_station))[2])
+    
+    df <-rbind(df, aux)
+  }
+  
+  df <- df|>
+    filter(u > 0 & v > 0) |>
+    filter(u < 1 & v < 1) |>
+    mutate(Tr = 1/(1-u-v+Cumulative)) |>
+    mutate(Tr = ifelse(Tr < 0, NA, Tr),
+           id = factor(id, labels = c("1920-1969",
+                                      "1930-1979",
+                                      "1940-1989",
+                                      "1950-1999",
+                                      "1960-2009",
+                                      "1970-2019"))) 
+  
+  
+  xmax <- max(df$x, na.rm = T) |>
+    ceiling()
+  ymax <- max(df$y, na.rm = T)|>
+    ceiling()
+  
+  list_plot <- list()
+  for (i in 1:length(periods)){
+    # i = 1
+    list_plot[[i]]<- df |>
+      ggplot(aes(x = x, y = y))+
+      # facet_wrap(plot_aux1~plot_aux2, ncol = 5)+
+      geom_contour(aes(z = Tr, colour = id),
+                   breaks = periods[i],
+                   size = 1)+
+      # scale_colour_grey("Period", start = 0.6, end = 0, aesthetics = "colour")+
+      scale_color_viridis_d("Period", option = "D", direction = -1)+
+      scale_x_continuous(expand = c(0.0,0), limits = c(0,xmax), breaks = seq(0, xmax, 5))+
+      scale_y_continuous(expand = c(0.0,0), limits = c(0,ymax), breaks = seq(0, ymax, 5))+
+      scale_linetype_discrete(labels = NULL)+
+      labs(x = 'Severity (-)', 
+           y = 'Duration (months)',
+           title = paste0('Frequency = ',1/periods[i],' (Tr = ',periods[i]," years)"))+
+      theme_update(aspect.ratio=1)+
+      theme_bw()+
+      theme(strip.background = element_blank(),
+            strip.text = element_blank(),
+            # axis.title = element_blank(),
+            # axis.text = element_blank()
+            title = element_text(size = 8),
+            # axis.title.y = element_blank(),
+            # axis.title.x = element_text(size=ifelse(i == 5, 10, 0)),
+            # axis.text.y = element_text(size = ifelse(i %in% c(1,4), 10, 0)),
+            # axis.text.x = element_text(size=ifelse(i > 3, 10, 0))
+            axis.title = element_blank(),
+            axis.text.y = element_text(size = ifelse(i %in% c(1), 10, 0)),
+            axis.text.x = element_text(size=10)
+      )
+    
+  }
+  
+  
+  my_plot <- ggpubr::ggarrange(plotlist = list_plot,
+                               nrow = 1, ncol = 4,
+                               align = "hv",
+                               common.legend = TRUE, legend = "bottom")
+  
+  
+  my_plot <- ggpubr::annotate_figure(my_plot, 
+                             top = text_grob(
+                               paste0("Change in the events under same return period (Tr) - Station ID ",id_station),
+                               face = "bold", size = 12))
+  
+  my_plot <- annotate_figure(my_plot, 
+                             left = text_grob('Duration (months)', 
+                                              size = 10,
+                                              just = "centre",
+                                              rot = 90)) |>
+    annotate_figure(bottom = text_grob('Severity (-)', 
+                                       size = 10,
+                                       just = "centre",
+                                       vjust = -7,
+                                       hjust = +0.2,
+                                       rot = 0))
+  
+  return(my_plot)
+}
+
+
+# 2. THE APP --------------------------------------------------------------
+
+
+#__2.1 User interface -------------------------------------------------------------
+ui <- fluidPage(
+  
+  theme = bs_theme(version = 4, bootswatch = "materia"),
+  
+  title = "Copula-Entropy Drought Analysis",
+  
+  titlePanel(div(h3('Copula-Entropy Drought Analysis', style="margin: 0;"), 
+                 h4('Changes in drought features', 
+                    style="margin: 0;"),br())),
+  
+  titlePanel(div(style = 
+  "border-style: solid; border-color: grey; 
+  border-width: 2px; padding: 5px;
+  background-color: #ededed; border-radius: 10px",
+  h5(align = "left", 
+  'In this app we allow the visualization of the results of changes in the Severity-Duration-Frequency (SDF) curves
+  of 29 stations in Europe. The selected stations provided by the ECA&',
+                    style="margin: 0;"))),
+  br(),
+  
+  # inputs and simple map ----
+  fluidRow(
+    column(
+      2,
+      # h4("Select station"),
+      # add menus for selections ----
+      selectInput(
+        "station_",
+        "Select station",
+        choices = data_stations$name,
+        selected = "Potsdam"
+      )
+    ),
+    # show map with states and production values ----
+    column(5, offset = 2,
+           leafletOutput("Map1")),
+    # column(5, offset = 0,
+    #        align = "center",
+    #        titlePanel(div(style = 
+    #        "border-style: solid; border-color: grey; 
+    #        border-width: 2px; padding: 5px;
+    #        background-color: #ededed; border-radius: 10px",
+    #        h6 ('Change in the return period of specific extreme droughts between 1920-1969 and 1970-2019. 
+    #            Grey areas indicate that no solution was found for the return period changes (NA).',
+    #            style="margin: 0;"))),
+    #        imageOutput("plot2"))
+  ),
+  br(),
+  br(),
+  br(),
+
+  
+  titlePanel(div(style = 
+  "border-style: solid; border-color: grey; 
+  border-width: 2px; padding: 5px;
+  background-color: #ededed; border-radius: 10px",
+  h5('Below we present the changes in the return period distribution of droughts for the selected station. 
+  Each box presents the modifications in drought characteristics for return periods of 5, 10, 20, and 50 years.
+  Each curve is obtained from a 50-year long time series of drought occurrences.',
+     style="margin: 0;"))),
+  br(),
+  fluidRow(
+    column(
+      12,
+      offset = 0,
+      align = "center",
+      shiny::imageOutput("plot1", width = "100%"))),
+  br(),
+  br(),
+  br(),
+  
+  
+  fluidRow(
+    column(
+      6,
+      offset = 0,
+      align = "center",
+      titlePanel(div(style = 
+      "border-style: solid; border-color: grey; 
+      border-width: 2px; padding: 5px;
+      background-color: #ededed; border-radius: 10px",
+      h5(align = "left", 'Change in the return period of specific extreme droughts between 1920-1969 and 1970-2019. 
+         Grey areas indicate that no solution was found for the return period changes (NA).',
+         style="margin: 0;"))),
+      br(),
+      shiny::imageOutput("plot2", width = "100%")),
+  column(
+    6,
+    offset = 0, 
+    align = "center",
+    titlePanel(div(style = 
+    "border-style: solid; border-color: grey; 
+    border-width: 2px; padding: 5px;
+    background-color: #ededed; border-radius: 10px",
+    h5(align = "left", 'Non-parametric probability density distributions for duration and severity of droughts. 
+       Each curve is obtained from a 50-year long time series of drought occurrences.',
+       style="margin: 0;"))),
+    br(),
+    br(),
+    shiny::imageOutput("plot3", width = "100%"))
+  ),
+  br(),
+  br(),
+  br(),
+  br(),
+  br(),
+  br(),
+  br(),
+  br(),
+  br(),
+  br(),
+
+  
+  
+  
+  
+  
+  # notes ----
+  
+  wellPanel(fluidRow(column(12,
+                            h4("About this app"),
+                            h5('This app is a support tool to the article "Which Droughts Are Becoming More Frequent? 
+                               A Copula Entropy Analysis on the Recurrence Time of Droughts In Europe" ',  
+                               tags$br(),
+                               "Climate data: ", 
+                               tags$a(href = "https://www.ecad.eu/dailydata/index.php",
+                                      "ecad.eu"),
+                               tags$br(),
+                               "Data analysis: ", 
+                               tags$a(href = "https://github.com/pedroalencar1/cedaR",
+                                      "package-cedaR"),
+                               tags$br(),
+                               "Author:", tags$a(href="https://www.tu.berlin/oekohydro/team/pedro-alencar/", "Pedro Alencar"),
+                               tags$a(href="https://orcid.org/0000-0001-6221-8580", "(0000-0001-6221-8580)"),
+                               tags$br(),
+                               "Berlin, 25.08.2023"
+                            )
+  )
+  )
+)
+)
+
+
+#__2.2 Server --------------------------------------------------------------
+server <- function(input, output, session) {
+  
+  observe({ #update the list of regions
+    
+    station <- input$station_
+    text_station <- as.character(station)
+    id <- data_stations$station[which(data_stations$name == text_station)]
+    
+    
+  })
+  
+  # grabs input and creates map
+  observe(label = "map_desing",{
+    
+    station <- input$station_
+    text_station <- as.character(station)
+    id <- data_stations$station[which(data_stations$name == text_station)]
+    
+    # define label features for leaflet map
+    output$Map1 <- renderLeaflet({
+
+     leaflet()|>
+        setView(lng = 12, lat = 52, zoom = 3)|>
+        addTiles()|>
+        addCircleMarkers(
+         data = data_stations,
+         lat = ~LAT,
+         lng = ~LON,
+         radius =6,
+         opacity = 0.5,
+         fillOpacity = 0.3,
+         color = ~color,
+         weight = 2,
+         popup = paste(
+           "ID: ",data_stations$station,
+           "<br>",
+           data_stations$name
+         )
+      ) |>
+        addCircleMarkers(
+          data = data_stations[data_stations$station == id,],
+          lat = ~LAT,
+          lng = ~LON,
+          radius =6,
+          opacity = 1,
+          fillOpacity = 1,
+          color = ~color,
+          weight = 2)
+    })
+  })
+  
+  observe(label = "plot1", {
+    
+    station <- input$station_
+    text_station <- as.character(station)
+    id <- data_stations$station[which(data_stations$name == text_station)]
+    
+    my_image <- figures[grepl(paste0(id,"_op3"), figures)]
+    my_image2 <- figures[grepl(paste0(id,"_tr"), figures)]
+    my_image3 <- figures[grepl(paste0(id,".png"), figures)]
+    
+    output$plot1<- renderImage({
+      fig = my_image
+      list(src=fig,
+           width = 1200)
+    }, deleteFile = FALSE)  
+    
+    output$plot2<- renderImage({
+      fig = my_image2
+      list(src=fig,
+           width = 400)
+    }, deleteFile = FALSE) 
+    
+    output$plot3<- renderImage({
+      fig = my_image3
+      list(src=fig,
+           width = 450)
+    }, deleteFile = FALSE) 
+  })
+  
+  # observe(label = "plot1", {
+  # 
+  #   station <- input$station_
+  #   text_station <- as.character(station)
+  #   id <- data_stations$station[which(data_stations$name == text_station)]
+  # 
+  #   my_image2 <- figures[grepl(paste0(id,"_tr"), figures)]
+  # 
+  #   output$plot1<- renderImage({
+  #     fig = my_image2
+  #     list(src=fig,
+  #          width = 400)
+  #   }, deleteFile = FALSE)
+  # })
+  
+}
+
+#__2.3 Build app ------------------------------------------------------------------
+shinyApp(ui, server)
